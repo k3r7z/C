@@ -10,10 +10,8 @@
 #define COLOR_CYAN    "\033[36m"
 #define COLOR_BOLD    "\033[1m"
 
-void tui_print_status(const char *msg, const char *symbol);
-void tui_print_phase(const char *phase);
-void tui_print_error(const char *msg);
-void tui_print_info(const char *msg);
-void tui_print_success(const char *msg);
+void tui_print_error(const char *fmt_msg, ...);
+void tui_print_info(const char *fmt_msg, ...);
+void tui_print_success(const char *fmt_msg, ...);
 
 #endif
