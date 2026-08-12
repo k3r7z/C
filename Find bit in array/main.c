@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
+#include "../TUI/tui.h"
 
 
 typedef struct{
@@ -20,7 +21,7 @@ void *find_bit(void *arg){
     int i = data->from;
     while( *data->found == false && i < data->to ){
 	if( data->array[i] == true ){
-	    printf("[Thread %d] Bit found in the position %d\n", data->thread_number, i);
+	    tui_print_success("(Thread %d) Bit found in the position %d", data->thread_number, i);
 	    *data->found = true;
 	    return NULL;
 	}
@@ -28,9 +29,9 @@ void *find_bit(void *arg){
     }
 
     if( *data->found == true)
-	printf("[Thread %d] Stopping because bit was found in other thread\n", data->thread_number);
+	tui_print_info("(Thread %d) Stopping because bit was found in other thread", data->thread_number);
     else
-	printf("[Thread %d] Couldn't find the bit in the assignated range\n", data->thread_number);
+	tui_print_error("(Thread %d) Couldn't find the bit in the assignated range", data->thread_number);
     
     return NULL;
 }
@@ -68,7 +69,8 @@ int main(int argc, char **argv){
 	array[i] = false;
     int random_position = rand() % array_size;
     array[random_position] = true;
-    printf("The 1 is on the %d position\n", random_position);
+    tui_print_info("The 1 is on the %d position", random_position);
+    
 
     bool *found = malloc(sizeof(bool));
     int range_division = array_size / number_of_threads;
@@ -91,6 +93,6 @@ int main(int argc, char **argv){
     array = NULL;
 
     double execution_time = (double) ( clock() - start ) / CLOCKS_PER_SEC;
-    printf("Execution time in %.3f seconds\n", execution_time);
+    tui_print_info("Program finished in %.3f seconds", execution_time);
     return 0;
 }
