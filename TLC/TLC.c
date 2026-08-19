@@ -1,6 +1,7 @@
 #include <glib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -170,7 +171,7 @@ int main(int argc, char* argv[]){
 	print_help();
 	return 1;
     }
-	
+
     int opt;
     char ssid[15];
     int from = 0, to = 100000000;
@@ -199,7 +200,7 @@ int main(int argc, char* argv[]){
 	}
     }
 
- 
+    clock_t start = clock();
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
     GError *error = NULL;
     NMClient *client = nm_client_new(NULL, &error);
@@ -296,8 +297,16 @@ int main(int argc, char* argv[]){
 	    tui_print_error("%s failed", passphrase);
     }
 	
-    if(loop) g_main_loop_unref(loop);
-    if(connection) g_object_unref(connection);
-    if(client) g_object_unref(client);
+    g_main_loop_unref(loop);
+    g_object_unref(connection);
+    g_object_unref(client);
+
+    clock_t end = clock();
+    double program_time = (double) ( (end - start) ) / CLOCKS_PER_SEC;
+    if(found)
+	tui_print_success("Program finished in %.2f seconds", program_time);	
+    else
+	tui_print_error("PSK couldn't be found (%.2f seconds)", program_time);
+
     return 0;
 }
