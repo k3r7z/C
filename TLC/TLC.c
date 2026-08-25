@@ -1,4 +1,5 @@
 #include <glib.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -32,6 +33,9 @@ typedef struct {
     NMRemoteConnection *connection;
     char *passphrase;
 } CallbackData;
+
+const char *FILENAME = ".progress.save";
+bool interrupted = false;
 
 
 static void print_help(){
@@ -165,6 +169,11 @@ static void set_connection_settings(NMConnection *connection, const char *ssid){
 }
 
 
+void interruptionSignalHandler(int sig){
+    interrupted = true;
+}
+
+
 int main(int argc, char* argv[]){
     if(argc == 1){
 	tui_print_error("Arguments are required");
@@ -172,10 +181,25 @@ int main(int argc, char* argv[]){
 	return 1;
     }
 
+    signal(SIGINT, interruptionSignalHandler);
+
     int opt;
     char ssid[15];
     int from = 0, to = 100000000;
     int threads_number = 4;
+
+    /* Look for a previos progress file */
+    FILE *progress_file = fopen(FILENAME, "r");
+    if(progress_file){
+	tui_print_info("Progress file detected");
+	char buffer[9];
+	fgets(buffer, 9, progress_file);
+	from = atoi(buffer);
+	fclose(progress_file);
+    }
+    else
+	tui_print_info("No previous progress detected");
+	
 
     // -s <ssid>
     // -f <start of range (inclusive)> (0 default)
@@ -187,7 +211,8 @@ int main(int argc, char* argv[]){
 	    break;
 	case 'f':
 	    // Not making any error checking yet
-	    from = atoi(optarg);
+	    if(!progress_file)
+		from = atoi(optarg);
 	    break;
 	case 't':
 	    // Not making any error checking yet
@@ -242,9 +267,8 @@ int main(int argc, char* argv[]){
     char prefix[3];
     strcpy(prefix, ssid + strlen(ssid) - 2);
     cb_data.passphrase = passphrase;
-
-    for(int i = from; i < to; ++i ){
-
+    int i = from;
+    while(i < to && !interrupted){
 	snprintf(passphrase, sizeof(passphrase), "%s%08d", prefix, i);
 
 	NMSettingWirelessSecurity *s_sec = nm_connection_get_setting_wireless_security(NM_CONNECTION(cb_data.connection));
@@ -295,11 +319,23 @@ int main(int argc, char* argv[]){
 	}
 	else
 	    tui_print_error("%s failed", passphrase);
+	++i;
     }
 	
     g_main_loop_unref(loop);
     g_object_unref(connection);
     g_object_unref(client);
+
+    if(interrupted){
+	tui_print_info("\nSaving progress!");
+	FILE *file = fopen(FILENAME, "w");
+	if(!file)
+	    tui_print_error("There was a problem trying to save the progress");
+
+	fprintf(file, "%d", i);
+	fclose(file);
+	return SIGINT;
+    }
 
     clock_t end = clock();
     double program_time = (double) ( (end - start) ) / CLOCKS_PER_SEC;
